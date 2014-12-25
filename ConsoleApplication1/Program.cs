@@ -2,15 +2,105 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace ConsoleApplication1
-{
-    class Program
-    {
-        static void Main(string[] args)
-        {
+namespace ConsoleApplication1 {
+    [StructLayout( LayoutKind.Sequential, CharSet = CharSet.Ansi )]
+
+    struct Signature {
+        public string sig; // сигнатура “1CDBMSV8”
+        public char ver1;
+        public char ver2;
+        public char ver3;
+        public char ver4;
+        public UInt32 length;
+        public int unknown;
+    };
+    struct FreeBlocksHead {
+        public string sig; // сигнатура “1CDBOBV8”
+        public UInt32 length;
+        public int version1;
+        public int version2;
+        public UInt32 version;
+        public UInt32[] blocks; // 1018
+    };
+    struct RootHead {
+        public string lang;
+        public int numblocks;
+        public UInt32[] blocks; // 1018
+    };
+    class Program {
+        static Signature readSignature( byte[] block ) {
+            using( var mms = new MemoryStream( block ) ) {
+                using( var reader = new BinaryReader( mms ) ) {
+                    var sig = new Signature {
+
+                        sig = Encoding.ASCII.GetString( reader.ReadBytes( 8 ) ),
+                        ver1 = reader.ReadChar(),
+                        ver2 = reader.ReadChar(),
+                        ver3 = reader.ReadChar(),
+                        ver4 = reader.ReadChar(),
+                        length = reader.ReadUInt32()
+                    };
+
+                    return sig;
+                }
+            }
+        }
+        static FreeBlocksHead readBlockHead( byte[] block ) {
+            using( var mms = new MemoryStream( block ) ) {
+                using( var reader = new BinaryReader( mms ) ) {
+                    var sig = new FreeBlocksHead {
+
+                        sig = Encoding.ASCII.GetString( reader.ReadBytes( 8 ) ),
+                        length = reader.ReadUInt32(),
+                        version1 = reader.ReadInt32(),
+                        version2 = reader.ReadInt32(),
+                        version = reader.ReadUInt32(),
+                        blocks = new UInt32[1018]
+                    };
+
+                    for( int i = 0; i < 1018; i++ ) {
+                        sig.blocks[i] = reader.ReadUInt32();
+                    }
+
+                    return sig;
+                }
+            }
+        }
+   static RootHead readRootHead( byte[] block ) {
+            using( var mms = new MemoryStream( block ) ) {
+                using( var reader = new BinaryReader( mms ) ) {
+                    var sig = new RootHead {
+
+                        lang = Encoding.ASCII.GetString( reader.ReadBytes( 32 ) ),
+                        numblocks = reader.ReadInt32()
+                    };
+                    sig.blocks = new UInt32[sig.numblocks];
+
+                    for( int i = 0; i < sig.numblocks; i++ ) {
+                        sig.blocks[i] = reader.ReadUInt32();
+                    }
+
+                    return sig;
+                }
+            }
+        }      
+        static void Main( string[] args ) {
+
+            var data1 = File.ReadAllBytes( @"..\..\..\1cv8.1CD" );
+            var blocks = new List<byte[]>();
+            for( int i = 0; i < data1.Length; i += 4096 ) {
+                var na = new byte[4096];
+                Array.Copy( data1, i, na, 0, 4096 );
+                blocks.Add( na );
+            }
+
+            var sig = readSignature( blocks[0] );
+            var frees = readBlockHead( blocks[1] );
+            var root = readRootHead( blocks[4] );
 
             var block = new byte[]{
 0x1E,0x2D,0x78,0xBF,0x20,0xEB,0x57,0x34,0x6E,0x9F,0x4C,0x79,0x0F,0xD0,0x26,0x8A,
@@ -31,20 +121,18 @@ namespace ConsoleApplication1
 0x3A,0x15,0x45,0x9D,0x0C,0xD9,0x7B,0x07,0x42,0xAD,0x7C,0x48,0x3C,0xE0,0x17,0xBA,
 0x21,0xFE,0x30,0xA2,0x56,0x95,0x76,0x9A,0x4A,0x02};
 
-            using (var ms = new MemoryStream())
-            {
-                for (int i = block[0] + 1, j = 1; i < block.Length; i++)
-                {
-                    if (j > block[0])
+            using( var ms = new MemoryStream() ) {
+                for( int i = block[0] + 1, j = 1; i < block.Length; i++ ) {
+                    if( j > block[0] )
                         j = 1;
 
                     var r = block[i] ^ block[j];
-                    ms.WriteByte((byte)r);
+                    ms.WriteByte( (byte)r );
                     j++;
                 }
                 var data = ms.ToArray();
-                var row = Encoding.UTF8.GetString(data);
-                Console.WriteLine(row);
+                var row = Encoding.UTF8.GetString( data );
+                Console.WriteLine( row );
             }
         }
     }
