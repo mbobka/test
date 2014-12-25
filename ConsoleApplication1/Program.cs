@@ -43,7 +43,7 @@ namespace ConsoleApplication1
                     j++;
                 }
                 var data = ms.ToArray();
-                var row = Encoding.UTF8.GetChars(data);
+                var row = Encoding.UTF8.GetString(data);
                 Console.WriteLine(row);
             }
         }
