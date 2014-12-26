@@ -18,7 +18,7 @@ namespace ConsoleApplication1 {
         public UInt32 length;
         public int unknown;
     };
-    struct FreeBlocksHead {
+    struct BlockHead {
         public string sig; // сигнатура “1CDBOBV8”
         public UInt32 length;
         public int version1;
@@ -31,6 +31,12 @@ namespace ConsoleApplication1 {
         public int numblocks;
         public UInt32[] blocks; // 1018
     };
+
+    struct PlainBlockDirectory {
+        public int numblocks;
+        public UInt32[] blocks; // 1023
+    };
+
     class Program {
         static Signature readSignature( byte[] block ) {
             using( var mms = new MemoryStream( block ) ) {
@@ -49,10 +55,10 @@ namespace ConsoleApplication1 {
                 }
             }
         }
-        static FreeBlocksHead readBlockHead( byte[] block ) {
+        static BlockHead readBlockHead( byte[] block ) {
             using( var mms = new MemoryStream( block ) ) {
                 using( var reader = new BinaryReader( mms ) ) {
-                    var sig = new FreeBlocksHead {
+                    var sig = new BlockHead {
 
                         sig = Encoding.ASCII.GetString( reader.ReadBytes( 8 ) ),
                         length = reader.ReadUInt32(),
@@ -70,7 +76,7 @@ namespace ConsoleApplication1 {
                 }
             }
         }
-   static RootHead readRootHead( byte[] block ) {
+        static RootHead readRootHead( byte[] block ) {
             using( var mms = new MemoryStream( block ) ) {
                 using( var reader = new BinaryReader( mms ) ) {
                     var sig = new RootHead {
@@ -87,7 +93,24 @@ namespace ConsoleApplication1 {
                     return sig;
                 }
             }
-        }      
+        }
+
+        static PlainBlockDirectory readPlainBlockDirectory( byte[] block ) {
+            using( var mms = new MemoryStream( block ) ) {
+                using( var reader = new BinaryReader( mms ) ) {
+                    var sig = new PlainBlockDirectory {
+                        numblocks = reader.ReadInt32()
+                    };
+                    sig.blocks = new UInt32[sig.numblocks];
+
+                    for( int i = 0; i < sig.numblocks; i++ ) {
+                        sig.blocks[i] = reader.ReadUInt32();
+                    }
+
+                    return sig;
+                }
+            }
+        }
         static void Main( string[] args ) {
 
             var data1 = File.ReadAllBytes( @"..\..\..\1cv8.1CD" );
@@ -99,7 +122,9 @@ namespace ConsoleApplication1 {
             }
 
             var sig = readSignature( blocks[0] );
-            var frees = readBlockHead( blocks[1] );
+            var freesHead = readBlockHead( blocks[1] );
+            var blockHead = readBlockHead( blocks[2] );
+            var plainPD = readPlainBlockDirectory( blocks[3] );
             var root = readRootHead( blocks[4] );
 
             var block = new byte[]{
