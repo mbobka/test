@@ -7,8 +7,6 @@ using System.Text;
 using System.Threading.Tasks;
 
 namespace ConsoleApplication1 {
-    [StructLayout( LayoutKind.Sequential, CharSet = CharSet.Ansi )]
-
     struct Signature {
         public string sig; // сигнатура “1CDBMSV8”
         public char ver1;
@@ -24,17 +22,17 @@ namespace ConsoleApplication1 {
         public int version1;
         public int version2;
         public UInt32 version;
-        public UInt32[] blocks; // 1018
+        public int[] directoryBlocks; // 1018
     };
     struct RootHead {
         public string lang;
         public int numblocks;
-        public UInt32[] blocks; // 1018
+        public int[] directoryBlocks; // 1018
     };
 
     struct PlainBlockDirectory {
         public int numblocks;
-        public UInt32[] blocks; // 1023
+        public int[] directoryBlocks; // 1023
     };
 
     class Program {
@@ -65,11 +63,11 @@ namespace ConsoleApplication1 {
                         version1 = reader.ReadInt32(),
                         version2 = reader.ReadInt32(),
                         version = reader.ReadUInt32(),
-                        blocks = new UInt32[1018]
+                        directoryBlocks = new int[1018]
                     };
 
                     for( int i = 0; i < 1018; i++ ) {
-                        sig.blocks[i] = reader.ReadUInt32();
+                        sig.directoryBlocks[i] = reader.ReadInt32();
                     }
 
                     return sig;
@@ -84,10 +82,10 @@ namespace ConsoleApplication1 {
                         lang = Encoding.ASCII.GetString( reader.ReadBytes( 32 ) ),
                         numblocks = reader.ReadInt32()
                     };
-                    sig.blocks = new UInt32[sig.numblocks];
+                    sig.directoryBlocks = new int[sig.numblocks];
 
                     for( int i = 0; i < sig.numblocks; i++ ) {
-                        sig.blocks[i] = reader.ReadUInt32();
+                        sig.directoryBlocks[i] = reader.ReadInt32();
                     }
 
                     return sig;
@@ -101,10 +99,10 @@ namespace ConsoleApplication1 {
                     var sig = new PlainBlockDirectory {
                         numblocks = reader.ReadInt32()
                     };
-                    sig.blocks = new UInt32[sig.numblocks];
+                    sig.directoryBlocks = new int[sig.numblocks];
 
                     for( int i = 0; i < sig.numblocks; i++ ) {
-                        sig.blocks[i] = reader.ReadUInt32();
+                        sig.directoryBlocks[i] = reader.ReadInt32();
                     }
 
                     return sig;
@@ -124,7 +122,7 @@ namespace ConsoleApplication1 {
             var sig = readSignature( blocks[0] );
             var freesHead = readBlockHead( blocks[1] );
             var blockHead = readBlockHead( blocks[2] );
-            var plainPD = readPlainBlockDirectory( blocks[3] );
+            var plainPD = readPlainBlockDirectory( blocks[blockHead.directoryBlocks[0]] );
             var root = readRootHead( blocks[4] );
 
             var block = new byte[]{
