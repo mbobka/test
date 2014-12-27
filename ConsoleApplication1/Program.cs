@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 namespace ConsoleApplication1 {
@@ -76,7 +77,7 @@ namespace ConsoleApplication1 {
                 }
             }
         }
-        static RootHead readRootHead( params byte[] data) {
+        static RootHead readRootHead( params byte[] data ) {
             using (var mms = new MemoryStream( data )) {
                 using (var reader = new BinaryReader( mms )) {
                     var sig = new RootHead
@@ -144,6 +145,114 @@ namespace ConsoleApplication1 {
                 yield return readStructureBlock( concatBlocks( blocks, blocksaPD ), blocksa.length );
             }
         }
+
+
+        /*
+         * {"IBVERSION",0,
+         * {"Fields",
+         * {"IBVERSION","N",0,10,0,"CS"},
+         * {"PLATFORMVERSIONREQ","N",0,10,0,"CS"}
+         * },
+         * {"Indexes"},
+         * {"Recordlock","0"},
+         * {"Files",6,0,0}
+         * }
+        */
+
+
+        /// <summary>
+        /// Далее, размер и формат поля зависит от типа поля. Типы поля бывают такими:
+        /// </summary>
+        /// <param name="B">двоичные данные. Длина поля равна FieldLength байт.</param>
+        /// <param name="L">булево. Длина поля 1 байт. Нулевое значение байта означает Ложь, иначе Истина.</param>
+        /// <param name="N">число. Длина поля в байтах равна Цел((FieldLength + 2) / 2). Числа хранятся в двоично-десятичном виде. Первый полубайт означает знак числа. 0 – число отрицательное, 1 – положительное. Каждый следующий полубайт соответствует одной десятичной цифре. Всего цифр FieldLength. Десятичная точка находится в FieldPrecision цифрах справа. Например, FieldLength = 5, FieldPrecision = 3. Байты 0x18, 0x47, 0x23 означают число 84.723, а байты 0x00, 0x00, 0x91 представляют число -0.091.</param>
+        /// <param name="NC">строка фиксированной длины. Длина поля равна FieldLength * 2 байт. Представляет собой строку в формате Unicode (каждый символ занимает 2 байта).</param>
+        /// <param name="NVC">строка переменной длины. Длина поля равна FieldLength * 2 + 2 байт. Первые 2 байта содержат длину строки (максимум FieldLength). Оставшиеся байты представляет собой строку в формате Unicode (каждый символ занимает 2 байта).</param>
+        /// <param name="RV">версия. Длина поля 16 байт. Предположительно содержит четыре числа int.</param>
+        /// <param name="NT">строка неограниченной длины. Длина поля 8 байт. Первые четыре байта содержат начальный индекс блока в объекте Blob таблицы, вторые четыре – длину данных в объекте Blob. В объекте Blob содержится строка в формате Unicode.</param>
+        /// <param name="I">двоичные данные неограниченной длины. Длина поля 8 байт. Первые четыре байта содержат начальный индекс блока в объекте Blob таблицы, вторые четыре – длину данных в объекте Blob.</param>
+        /// <param name="DT">дата-время. Длина поля 7 байт. Содержит данные в двоично-десятичном виде. Первые 2 байта содержат четыре цифры года, третий байт – две цифры месяца, четвертый байт – день, пятый – часы, шестой – минуты и седьмой – секунды, все также по 2 цифры.</param>
+        /// 
+
+        public enum FieldTypes {
+            BinaryData,
+            Boolean,
+            Numeric,
+            String,
+            VarString,
+            Version,
+            Text,
+            Blob,
+            DateTime
+        }
+        public class FieldInfo {
+            public string Name;
+            public FieldTypes Type;
+            public bool Nullable;
+            public int Length;
+            public int FieldPrecision;
+            public string CaseSensitive;
+        }
+
+        class TableInfo {
+            public string Name;
+            public List<FieldInfo> Fields = new List<FieldInfo>();
+            public int DataDirectoryBlock;
+            public int BlobDirectoryBlock;
+        }
+
+        static TableInfo exportStructure( string structure ) {
+            var reName = new Regex( "^{\"(?<name>[^\"]+)\",\\d+,$" );
+            var reFieldsStart = new Regex( "^{\"Fields\",$" );
+            var reField = new Regex( "^{\"(?<FieldName>[^\"]+)\",\"(?<FieldType>[^\"]+)\",(?<NullExists>\\d+),(?<FieldLength>\\d+),(?<FieldPrecision>\\d+),\"(?<FieldCaseSensitive>[^\"]+)\"}" );
+            var reFiles = new Regex( "^{\"Files\",(?<data>\\d+),(?<blobs>\\d+),(\\d+)}$" );
+            var rows = structure.Split( new string[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries );
+
+            var tableInfo = new TableInfo();
+            tableInfo.Name = reName.Match( rows[0] ).Groups["name"].Value;
+
+            if( !reFieldsStart.Match( rows[1] ).Success )
+                throw new InvalidDataException();
+
+            int i = 2;
+            for( var match = reField.Match( rows[i] ); match.Success; match = reField.Match( rows[i] ) ) {
+                var fi = new FieldInfo();
+                fi.Name = match.Groups["FieldName"].Value;
+                switch( match.Groups["FieldType"].Value ) {
+                    case "B": fi.Type =FieldTypes.BinaryData ; break;
+                    case "L": fi.Type = FieldTypes.Boolean; break;
+                    case "N": fi.Type = FieldTypes.Numeric; break;
+                    case "NC": fi.Type = FieldTypes.String; break;
+                    case "NVC": fi.Type = FieldTypes.VarString; break;
+                    case "RV": fi.Type = FieldTypes.Version; break;
+                    case "NT": fi.Type = FieldTypes.Text; break;
+                    case "I": fi.Type = FieldTypes.Blob; break;
+                    case "DT": fi.Type = FieldTypes.DateTime; break;
+                    default:
+                        throw new InvalidDataException();
+                }
+
+                fi.Nullable = match.Groups["NullExists"].Value == "1";
+                fi.Length = int.Parse( match.Groups["FieldLength"].Value );
+                fi.FieldPrecision = int.Parse( match.Groups["FieldPrecision"].Value );
+                fi.CaseSensitive = match.Groups["FieldCaseSensitive"].Value;
+
+                tableInfo.Fields.Add( fi );
+                i++;
+            }
+
+            for( ; i < rows.Length; i++ ) {
+                var match = reFiles.Match( rows[i] );
+
+                if( match.Success ) {
+                    tableInfo.BlobDirectoryBlock = int.Parse( match.Groups["blobs"].Value );
+                    tableInfo.DataDirectoryBlock = int.Parse( match.Groups["data"].Value );
+                }
+            }
+
+            return tableInfo;
+        }
+
         static void Main( string[] args ) {
 
             var data1 = File.ReadAllBytes( @"..\..\..\1cv8.1CD" );
@@ -157,7 +266,10 @@ namespace ConsoleApplication1 {
             var sig = readSignature( blocks[0] );
             var freesHead = readBlockHead( blocks[1] );
 
-            var structures = readStructures( blocks ).ToArray();
+            var structures = readStructures( blocks ).Select( vx => exportStructure( vx ) ).ToArray();
+            foreach( var s in structures ) {
+                //                exportStructure( s );
+            }
 
             var block = new byte[]{
 0x1E,0x2D,0x78,0xBF,0x20,0xEB,0x57,0x34,0x6E,0x9F,0x4C,0x79,0x0F,0xD0,0x26,0x8A,
