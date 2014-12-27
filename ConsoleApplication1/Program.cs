@@ -18,7 +18,7 @@ namespace ConsoleApplication1 {
     };
     struct BlockHead {
         public string sig; // сигнатура “1CDBOBV8”
-        public UInt32 length;
+        public int length;
         public int version1;
         public int version2;
         public UInt32 version;
@@ -37,9 +37,10 @@ namespace ConsoleApplication1 {
 
     class Program {
         static Signature readSignature( byte[] block ) {
-            using( var mms = new MemoryStream( block ) ) {
-                using( var reader = new BinaryReader( mms ) ) {
-                    var sig = new Signature {
+            using (var mms = new MemoryStream( block )) {
+                using (var reader = new BinaryReader( mms )) {
+                    var sig = new Signature
+                    {
 
                         sig = Encoding.ASCII.GetString( reader.ReadBytes( 8 ) ),
                         ver1 = reader.ReadChar(),
@@ -54,12 +55,13 @@ namespace ConsoleApplication1 {
             }
         }
         static BlockHead readBlockHead( byte[] block ) {
-            using( var mms = new MemoryStream( block ) ) {
-                using( var reader = new BinaryReader( mms ) ) {
-                    var sig = new BlockHead {
+            using (var mms = new MemoryStream( block )) {
+                using (var reader = new BinaryReader( mms )) {
+                    var sig = new BlockHead
+                    {
 
                         sig = Encoding.ASCII.GetString( reader.ReadBytes( 8 ) ),
-                        length = reader.ReadUInt32(),
+                        length = reader.ReadInt32(),
                         version1 = reader.ReadInt32(),
                         version2 = reader.ReadInt32(),
                         version = reader.ReadUInt32(),
@@ -74,11 +76,11 @@ namespace ConsoleApplication1 {
                 }
             }
         }
-        static RootHead readRootHead( byte[] block ) {
-            using( var mms = new MemoryStream( block ) ) {
-                using( var reader = new BinaryReader( mms ) ) {
-                    var sig = new RootHead {
-
+        static RootHead readRootHead( params byte[] data) {
+            using (var mms = new MemoryStream( data )) {
+                using (var reader = new BinaryReader( mms )) {
+                    var sig = new RootHead
+                    {
                         lang = Encoding.ASCII.GetString( reader.ReadBytes( 32 ) ),
                         numblocks = reader.ReadInt32()
                     };
@@ -94,9 +96,10 @@ namespace ConsoleApplication1 {
         }
 
         static PlainBlockDirectory readPlainBlockDirectory( byte[] block ) {
-            using( var mms = new MemoryStream( block ) ) {
-                using( var reader = new BinaryReader( mms ) ) {
-                    var sig = new PlainBlockDirectory {
+            using (var mms = new MemoryStream( block )) {
+                using (var reader = new BinaryReader( mms )) {
+                    var sig = new PlainBlockDirectory
+                    {
                         numblocks = reader.ReadInt32()
                     };
                     sig.directoryBlocks = new int[sig.numblocks];
@@ -107,6 +110,38 @@ namespace ConsoleApplication1 {
 
                     return sig;
                 }
+            }
+        }
+
+        static string readStructureBlock( byte[] block, int Size ) {
+            using (var mms = new MemoryStream( block )) {
+                using (var reader = new BinaryReader( mms )) {
+                    return Encoding.Unicode.GetString( reader.ReadBytes( Size ) );
+                }
+            }
+        }
+
+        static byte[][] joinBlocks( List<byte[]> blocks, PlainBlockDirectory directory ) {
+            return directory.directoryBlocks.Select( vx => blocks[vx] ).ToArray();
+        }
+        static byte[] concatBlocks( List<byte[]> blocks, PlainBlockDirectory directory ) {
+            var block = new byte[directory.directoryBlocks.Length * 4096];
+            for( int i = 0; i < directory.directoryBlocks.Length; i++ ) {
+                Array.Copy( blocks[directory.directoryBlocks[i]], 0, block, i * 4096, 4096 );
+            }
+
+            return block;
+        }
+        static IEnumerable<string> readStructures( List<byte[]> blocks ) {
+            var blockHead = readBlockHead( blocks[2] );
+            var plainPD = readPlainBlockDirectory( blocks[blockHead.directoryBlocks[0]] );
+            var root = readRootHead( concatBlocks( blocks, plainPD ) );
+
+            for( int i = 0; i < root.directoryBlocks.Length; i++ ) {
+                var blocksa = readBlockHead( blocks[root.directoryBlocks[i]] );
+                var blocksaPD = readPlainBlockDirectory( blocks[blocksa.directoryBlocks[0]] );
+
+                yield return readStructureBlock( concatBlocks( blocks, blocksaPD ), blocksa.length );
             }
         }
         static void Main( string[] args ) {
@@ -121,9 +156,8 @@ namespace ConsoleApplication1 {
 
             var sig = readSignature( blocks[0] );
             var freesHead = readBlockHead( blocks[1] );
-            var blockHead = readBlockHead( blocks[2] );
-            var plainPD = readPlainBlockDirectory( blocks[blockHead.directoryBlocks[0]] );
-            var root = readRootHead( blocks[4] );
+
+            var structures = readStructures( blocks ).ToArray();
 
             var block = new byte[]{
 0x1E,0x2D,0x78,0xBF,0x20,0xEB,0x57,0x34,0x6E,0x9F,0x4C,0x79,0x0F,0xD0,0x26,0x8A,
@@ -144,7 +178,7 @@ namespace ConsoleApplication1 {
 0x3A,0x15,0x45,0x9D,0x0C,0xD9,0x7B,0x07,0x42,0xAD,0x7C,0x48,0x3C,0xE0,0x17,0xBA,
 0x21,0xFE,0x30,0xA2,0x56,0x95,0x76,0x9A,0x4A,0x02};
 
-            using( var ms = new MemoryStream() ) {
+            using (var ms = new MemoryStream()) {
                 for( int i = block[0] + 1, j = 1; i < block.Length; i++ ) {
                     if( j > block[0] )
                         j = 1;
