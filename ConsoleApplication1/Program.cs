@@ -15,7 +15,6 @@ namespace ConsoleApplication1 {
         public char ver3;
         public char ver4;
         public UInt32 length;
-        public int unknown;
     };
     struct BlockHead {
         public string sig; // сигнатура “1CDBOBV8”
@@ -23,17 +22,17 @@ namespace ConsoleApplication1 {
         public int version1;
         public int version2;
         public UInt32 version;
-        public int[] directoryBlocks; // 1018
+        public List<int> directoryBlocks; // 1018
     };
     struct RootHead {
         public string lang;
         public int numblocks;
-        public int[] directoryBlocks; // 1018
+        public List<int> directoryBlocks; // 1018
     };
 
     struct PlainBlockDirectory {
         public int numblocks;
-        public int[] directoryBlocks; // 1023
+        public List<int> directoryBlocks; // 1018
     };
 
     class Program {
@@ -66,11 +65,14 @@ namespace ConsoleApplication1 {
                         version1 = reader.ReadInt32(),
                         version2 = reader.ReadInt32(),
                         version = reader.ReadUInt32(),
-                        directoryBlocks = new int[1018]
+                        directoryBlocks = new List<int>()
                     };
 
                     for( int i = 0; i < 1018; i++ ) {
-                        sig.directoryBlocks[i] = reader.ReadInt32();
+                        var r = reader.ReadInt32();
+                        if( r == 0 )
+                            break;
+                        sig.directoryBlocks.Add(r);
                     }
 
                     return sig;
@@ -85,10 +87,10 @@ namespace ConsoleApplication1 {
                         lang = Encoding.ASCII.GetString( reader.ReadBytes( 32 ) ),
                         numblocks = reader.ReadInt32()
                     };
-                    sig.directoryBlocks = new int[sig.numblocks];
+                    sig.directoryBlocks = new List<int>();
 
                     for( int i = 0; i < sig.numblocks; i++ ) {
-                        sig.directoryBlocks[i] = reader.ReadInt32();
+                        sig.directoryBlocks.Add(reader.ReadInt32());
                     }
 
                     return sig;
@@ -96,22 +98,24 @@ namespace ConsoleApplication1 {
             }
         }
 
-        static PlainBlockDirectory readPlainBlockDirectory( byte[] block ) {
-            using (var mms = new MemoryStream( block )) {
-                using (var reader = new BinaryReader( mms )) {
-                    var sig = new PlainBlockDirectory
-                    {
-                        numblocks = reader.ReadInt32()
-                    };
-                    sig.directoryBlocks = new int[sig.numblocks];
+        static int[] readPlainBlockDirectory( List<byte[]> blocks, List<int> directoryBlocks ) {
+            var r = new List<int>();
+            foreach( var b in directoryBlocks ) {
+                using (var mms = new MemoryStream( blocks[b] )) {
+                    using (var reader = new BinaryReader( mms )) {
+                        var sig = new PlainBlockDirectory
+                        {
+                            numblocks = reader.ReadInt32()
+                        };
+                        sig.directoryBlocks = new List<int>();
 
-                    for( int i = 0; i < sig.numblocks; i++ ) {
-                        sig.directoryBlocks[i] = reader.ReadInt32();
+                        for( int i = 0; i < sig.numblocks; i++ ) {
+                            r.Add( reader.ReadInt32() );
+                        }
                     }
-
-                    return sig;
                 }
             }
+            return r.ToArray();
         }
 
         static string readStructureBlock( byte[] block, int Size ) {
@@ -125,86 +129,206 @@ namespace ConsoleApplication1 {
         static byte[][] joinBlocks( List<byte[]> blocks, PlainBlockDirectory directory ) {
             return directory.directoryBlocks.Select( vx => blocks[vx] ).ToArray();
         }
-        static byte[] concatBlocks( List<byte[]> blocks, PlainBlockDirectory directory ) {
-            var block = new byte[directory.directoryBlocks.Length * 4096];
-            for( int i = 0; i < directory.directoryBlocks.Length; i++ ) {
-                Array.Copy( blocks[directory.directoryBlocks[i]], 0, block, i * 4096, 4096 );
+        static byte[] concatBlocks( List<byte[]> blocks, int[] directory ) {
+            var block = new byte[directory.Length * 4096];
+            for( int i = 0; i < directory.Length; i++ ) {
+                Array.Copy( blocks[directory[i]], 0, block, i * 4096, 4096 );
             }
 
             return block;
         }
         static IEnumerable<string> readStructures( List<byte[]> blocks ) {
             var blockHead = readBlockHead( blocks[2] );
-            var plainPD = readPlainBlockDirectory( blocks[blockHead.directoryBlocks[0]] );
+            var plainPD = readPlainBlockDirectory( blocks, blockHead.directoryBlocks );
             var root = readRootHead( concatBlocks( blocks, plainPD ) );
 
-            for( int i = 0; i < root.directoryBlocks.Length; i++ ) {
+            for( int i = 0; i < root.directoryBlocks.Count; i++ ) {
                 var blocksa = readBlockHead( blocks[root.directoryBlocks[i]] );
-                var blocksaPD = readPlainBlockDirectory( blocks[blocksa.directoryBlocks[0]] );
+                var blocksaPD = readPlainBlockDirectory( blocks, blocksa.directoryBlocks );
 
                 yield return readStructureBlock( concatBlocks( blocks, blocksaPD ), blocksa.length );
             }
         }
 
 
-        /*
-         * {"IBVERSION",0,
-         * {"Fields",
-         * {"IBVERSION","N",0,10,0,"CS"},
-         * {"PLATFORMVERSIONREQ","N",0,10,0,"CS"}
-         * },
-         * {"Indexes"},
-         * {"Recordlock","0"},
-         * {"Files",6,0,0}
-         * }
-        */
-
-
-        /// <summary>
-        /// Далее, размер и формат поля зависит от типа поля. Типы поля бывают такими:
-        /// </summary>
-        /// <param name="B">двоичные данные. Длина поля равна FieldLength байт.</param>
-        /// <param name="L">булево. Длина поля 1 байт. Нулевое значение байта означает Ложь, иначе Истина.</param>
-        /// <param name="N">число. Длина поля в байтах равна Цел((FieldLength + 2) / 2). Числа хранятся в двоично-десятичном виде. Первый полубайт означает знак числа. 0 – число отрицательное, 1 – положительное. Каждый следующий полубайт соответствует одной десятичной цифре. Всего цифр FieldLength. Десятичная точка находится в FieldPrecision цифрах справа. Например, FieldLength = 5, FieldPrecision = 3. Байты 0x18, 0x47, 0x23 означают число 84.723, а байты 0x00, 0x00, 0x91 представляют число -0.091.</param>
-        /// <param name="NC">строка фиксированной длины. Длина поля равна FieldLength * 2 байт. Представляет собой строку в формате Unicode (каждый символ занимает 2 байта).</param>
-        /// <param name="NVC">строка переменной длины. Длина поля равна FieldLength * 2 + 2 байт. Первые 2 байта содержат длину строки (максимум FieldLength). Оставшиеся байты представляет собой строку в формате Unicode (каждый символ занимает 2 байта).</param>
-        /// <param name="RV">версия. Длина поля 16 байт. Предположительно содержит четыре числа int.</param>
-        /// <param name="NT">строка неограниченной длины. Длина поля 8 байт. Первые четыре байта содержат начальный индекс блока в объекте Blob таблицы, вторые четыре – длину данных в объекте Blob. В объекте Blob содержится строка в формате Unicode.</param>
-        /// <param name="I">двоичные данные неограниченной длины. Длина поля 8 байт. Первые четыре байта содержат начальный индекс блока в объекте Blob таблицы, вторые четыре – длину данных в объекте Blob.</param>
-        /// <param name="DT">дата-время. Длина поля 7 байт. Содержит данные в двоично-десятичном виде. Первые 2 байта содержат четыре цифры года, третий байт – две цифры месяца, четвертый байт – день, пятый – часы, шестой – минуты и седьмой – секунды, все также по 2 цифры.</param>
-        /// 
-
-        public enum FieldTypes {
-            BinaryData,
-            Boolean,
-            Numeric,
-            String,
-            VarString,
-            Version,
-            Text,
-            Blob,
-            DateTime
-        }
-        public class FieldInfo {
+        public abstract class BasicField {
             public string Name;
-            public FieldTypes Type;
             public bool Nullable;
-            public int Length;
-            public int FieldPrecision;
-            public string CaseSensitive;
+
+            public BasicField( string Name, bool Nullable ) {
+                this.Nullable = Nullable;
+                this.Name = Name;
+            }
+
+            public abstract int Size { get; }
+            public string AsJson( BinaryReader r ) {
+                return string.Format( "\"{0}\": {1}", Name, AsString( r ) );
+            }
+            public abstract string AsString( BinaryReader r );
         }
+
+        public abstract class BasicFieldWithLength: BasicField {
+            public int Length;
+
+            public BasicFieldWithLength( string Name, bool Nullable, int Length ) : base( Name, Nullable ) {
+                this.Length = Length;
+            }
+        }
+        public class BinaryField: BasicFieldWithLength {
+            public BinaryField( string Name, bool Nullable, int Length ) : base( Name, Nullable, Length ) { }
+
+            public override int Size {
+                get {
+                    return Length;
+                }
+            }
+
+            public override string AsString( BinaryReader r ) {
+                r.ReadBytes( Size );
+                return "\"<binary>\"";
+            }
+        }
+        public class NumericField: BasicFieldWithLength {
+            public int Precision;
+            public NumericField( string Name, bool Nullable, int Length, int Precision ) : base( Name, Nullable, Length ) { this.Precision = Precision; }
+
+            public override int Size {
+                get {
+                    return ( ( Length + 2 ) / 2 );
+                }
+            }
+
+            public override string AsString( BinaryReader r ) {
+                r.ReadBytes( Size );
+                return "\"<numeric>\"";
+            }
+        }
+        public class BooleanField: BasicField {
+            public BooleanField( string Name, bool Nullable ) : base( Name, Nullable ) { }
+            public override int Size {
+                get {
+                    return 1;
+                }
+            }
+
+            public override string AsString( BinaryReader r ) {
+                return r.ReadBoolean().ToString();
+            }
+        }
+        public class VersionField: BasicField {
+            public VersionField( string Name, bool Nullable ) : base( Name, Nullable ) { }
+            public override int Size {
+                get {
+                    return 16;
+                }
+            }
+
+            public override string AsString( BinaryReader r ) {
+                r.ReadBytes( Size );
+                return "\"<version>\"";
+            }
+        }
+        public class HiddenShortVersionField: BasicField {
+            public HiddenShortVersionField() : base( "HiddenVersion", false ) { }
+            public override int Size {
+                get {
+                    return 8;
+                }
+            }
+
+            public override string AsString( BinaryReader r ) {
+                r.ReadBytes( Size );
+                return "\"<version>\"";
+            }
+        }
+        public class StringField: BasicFieldWithLength {
+            public StringField( string Name, bool Nullable, int Length ) : base( Name, Nullable, Length ) { }
+            public override int Size {
+                get {
+                    return Length * 2;
+                }
+            }
+
+            public override string AsString( BinaryReader r ) {
+                return "\"" + Encoding.Unicode.GetString( r.ReadBytes( Size ) ) + "\"";
+            }
+        }
+        public class VarStringField: BasicFieldWithLength {
+            public VarStringField( string Name, bool Nullable, int Length ) : base( Name, Nullable, Length ) { }
+            public override int Size {
+                get {
+                    return Length * 2 + 2;
+                }
+            }
+
+            public override string AsString( BinaryReader r ) {
+                var l = Size - 2;
+                var length = (int)r.ReadUInt16();
+                if( length > Length )
+                    length = Length;
+                length *= 2;
+                l -= length;
+                var res = Encoding.Unicode.GetString( r.ReadBytes( length ) );
+                r.ReadBytes( l );
+                return "\"" + res + "\"";
+            }
+        }
+        public class TextField: BasicField {
+            public TextField( string Name, bool Nullable ) : base( Name, Nullable ) { }
+            public override int Size {
+                get {
+                    return 8;
+                }
+            }
+
+            public override string AsString( BinaryReader r ) {
+                r.ReadBytes( Size );
+                return "\"<large text>\"";
+            }
+        }
+        public class BlobField: BasicField {
+            public BlobField( string Name, bool Nullable ) : base( Name, Nullable ) { }
+            public override int Size {
+                get {
+                    return 8;
+                }
+            }
+
+            public override string AsString( BinaryReader r ) {
+                r.ReadBytes( Size );
+                return "\"<blob>\"";
+            }
+        }
+        public class DateTimeField: BasicField {
+            public DateTimeField( string Name, bool Nullable ) : base( Name, Nullable ) { }
+            public override int Size {
+                get {
+                    return 7;
+                }
+            }
+
+            public override string AsString( BinaryReader r ) {
+                r.ReadBytes( Size );
+                return "\"<dateTime>\"";
+            }
+        }
+
+
 
         class TableInfo {
             public string Name;
-            public List<FieldInfo> Fields = new List<FieldInfo>();
+            public List<BasicField> Fields = new List<BasicField>();
             public int DataDirectoryBlock;
             public int BlobDirectoryBlock;
+
+            public int Size { get { var s = Fields.Sum( vx => vx.Size ) + Fields.Count( vx => vx.Nullable ); return s < 4 ? 4 : s; } }
         }
 
         static TableInfo exportStructure( string structure ) {
             var reName = new Regex( "^{\"(?<name>[^\"]+)\",\\d+,$" );
             var reFieldsStart = new Regex( "^{\"Fields\",$" );
             var reField = new Regex( "^{\"(?<FieldName>[^\"]+)\",\"(?<FieldType>[^\"]+)\",(?<NullExists>\\d+),(?<FieldLength>\\d+),(?<FieldPrecision>\\d+),\"(?<FieldCaseSensitive>[^\"]+)\"}" );
+            var reRecordlock = new Regex( "^{\"Recordlock\"," );
             var reFiles = new Regex( "^{\"Files\",(?<data>\\d+),(?<blobs>\\d+),(\\d+)}$" );
             var rows = structure.Split( new string[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries );
 
@@ -216,41 +340,108 @@ namespace ConsoleApplication1 {
 
             int i = 2;
             for( var match = reField.Match( rows[i] ); match.Success; match = reField.Match( rows[i] ) ) {
-                var fi = new FieldInfo();
-                fi.Name = match.Groups["FieldName"].Value;
+                var name = match.Groups["FieldName"].Value;
+                var nullable = match.Groups["NullExists"].Value == "1";
+                var length = int.Parse( match.Groups["FieldLength"].Value );
+                var fieldPrecision = int.Parse( match.Groups["FieldPrecision"].Value );
+
                 switch( match.Groups["FieldType"].Value ) {
-                    case "B": fi.Type =FieldTypes.BinaryData ; break;
-                    case "L": fi.Type = FieldTypes.Boolean; break;
-                    case "N": fi.Type = FieldTypes.Numeric; break;
-                    case "NC": fi.Type = FieldTypes.String; break;
-                    case "NVC": fi.Type = FieldTypes.VarString; break;
-                    case "RV": fi.Type = FieldTypes.Version; break;
-                    case "NT": fi.Type = FieldTypes.Text; break;
-                    case "I": fi.Type = FieldTypes.Blob; break;
-                    case "DT": fi.Type = FieldTypes.DateTime; break;
+                    case "B": tableInfo.Fields.Add( new BinaryField( name, nullable, length ) ); break;
+                    case "L": tableInfo.Fields.Add( new BooleanField( name, nullable ) ); break;
+                    case "N": tableInfo.Fields.Add( new NumericField( name, nullable, length, fieldPrecision ) ); break;
+                    case "NC": tableInfo.Fields.Add( new StringField( name, nullable, length ) ); break;
+                    case "NVC": tableInfo.Fields.Add( new VarStringField( name, nullable, length ) ); break;
+                    case "RV": tableInfo.Fields.Insert( 0, new VersionField( name, nullable ) ); break;
+                    case "NT": tableInfo.Fields.Add( new TextField( name, nullable ) ); break;
+                    case "I": tableInfo.Fields.Add( new BlobField( name, nullable ) ); break;
+                    case "DT": tableInfo.Fields.Add( new DateTimeField( name, nullable ) ); break;
                     default:
                         throw new InvalidDataException();
                 }
 
-                fi.Nullable = match.Groups["NullExists"].Value == "1";
-                fi.Length = int.Parse( match.Groups["FieldLength"].Value );
-                fi.FieldPrecision = int.Parse( match.Groups["FieldPrecision"].Value );
-                fi.CaseSensitive = match.Groups["FieldCaseSensitive"].Value;
-
-                tableInfo.Fields.Add( fi );
                 i++;
             }
 
             for( ; i < rows.Length; i++ ) {
-                var match = reFiles.Match( rows[i] );
+                var matchA = reFiles.Match( rows[i] );
+                var matchB = reRecordlock.Match( rows[i] );
 
-                if( match.Success ) {
-                    tableInfo.BlobDirectoryBlock = int.Parse( match.Groups["blobs"].Value );
-                    tableInfo.DataDirectoryBlock = int.Parse( match.Groups["data"].Value );
+                if( matchA.Success ) {
+                    tableInfo.BlobDirectoryBlock = int.Parse( matchA.Groups["blobs"].Value );
+                    tableInfo.DataDirectoryBlock = int.Parse( matchA.Groups["data"].Value );
+                }
+
+                if( matchB.Success ) {
+                    var rl = rows[i];
+                    if( rl == "{\"Recordlock\",\"0\"}," )
+                        continue;
+                    tableInfo.Fields.Insert( 0, new HiddenShortVersionField() );
                 }
             }
 
             return tableInfo;
+        }
+
+        static IEnumerable<Tuple<bool, byte[]>> loadTableData( int dataObjectBlock, int Size, List<byte[]> blocks ) {
+            var result = new List<Tuple<bool, byte[]>>();
+
+            if( dataObjectBlock == 0 )
+                return result;
+
+            var blockHead = readBlockHead( blocks[dataObjectBlock] );
+            if( blockHead.length == 0 )
+                return result;
+
+            var plainPD = readPlainBlockDirectory( blocks, blockHead.directoryBlocks );
+
+            using (var ms = new MemoryStream( concatBlocks( blocks, plainPD ) )) {
+                using (var reader = new BinaryReader( ms )) {
+                    for( var remain = blockHead.length; remain > 0; remain -= Size + 1 ) {
+                        var free = reader.ReadBoolean();
+                        result.Add( Tuple.Create( free, reader.ReadBytes( Size ) ) );
+
+                        if( remain < Size + 1 )
+                            throw new InvalidOperationException();
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        static byte[] loadBlobsData( int blobObjectBlock, List<byte[]> blocks ) {
+            if( blobObjectBlock == 0 )
+                return null;
+
+            return null;
+        }
+
+        static string readValue( BasicField fi, BinaryReader reader ) {
+            if( fi.Nullable ) {
+                if( reader.ReadByte() == 0 ) {
+                    reader.ReadBytes( fi.Size );
+                    return string.Format( "\"{0}\": {1}", fi.Name, "null" );
+                }
+            }
+
+            return fi.AsJson( reader );
+        }
+
+
+        static IEnumerable<string> loadTable( TableInfo ti, List<byte[]> blocks ) {
+            var ddd = loadTableData( ti.DataDirectoryBlock, ti.Size, blocks ).ToArray();
+            foreach( var data in ddd ) {
+                if( data.Item1 )
+                    continue;
+
+                using (var ms = new MemoryStream( data.Item2 )) {
+                    using (var reader = new BinaryReader( ms )) {
+                        var result = string.Join( ",", ti.Fields.Select( vx => readValue( vx, reader ) ) );
+
+                        yield return result;
+                    }
+                }
+            }
         }
 
         static void Main( string[] args ) {
@@ -268,8 +459,9 @@ namespace ConsoleApplication1 {
 
             var structures = readStructures( blocks ).Select( vx => exportStructure( vx ) ).ToArray();
             foreach( var s in structures ) {
-                //                exportStructure( s );
+                var tableData = loadTable( s, blocks ).ToArray();
             }
+
 
             var block = new byte[]{
 0x1E,0x2D,0x78,0xBF,0x20,0xEB,0x57,0x34,0x6E,0x9F,0x4C,0x79,0x0F,0xD0,0x26,0x8A,
@@ -304,5 +496,7 @@ namespace ConsoleApplication1 {
                 Console.WriteLine( row );
             }
         }
+
+
     }
 }
