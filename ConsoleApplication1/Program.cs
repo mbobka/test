@@ -72,7 +72,7 @@ namespace ConsoleApplication1 {
                         var r = reader.ReadInt32();
                         if( r == 0 )
                             break;
-                        sig.directoryBlocks.Add(r);
+                        sig.directoryBlocks.Add( r );
                     }
 
                     return sig;
@@ -90,7 +90,7 @@ namespace ConsoleApplication1 {
                     sig.directoryBlocks = new List<int>();
 
                     for( int i = 0; i < sig.numblocks; i++ ) {
-                        sig.directoryBlocks.Add(reader.ReadInt32());
+                        sig.directoryBlocks.Add( reader.ReadInt32() );
                     }
 
                     return sig;
@@ -160,6 +160,7 @@ namespace ConsoleApplication1 {
                 this.Name = Name;
             }
 
+            public virtual bool IsHidden { get { return false; } }
             public abstract int Size { get; }
             public string AsJson( BinaryReader r ) {
                 return string.Format( "\"{0}\": {1}", Name, AsString( r ) );
@@ -199,8 +200,34 @@ namespace ConsoleApplication1 {
             }
 
             public override string AsString( BinaryReader r ) {
-                r.ReadBytes( Size );
-                return "\"<numeric>\"";
+                var buffer = r.ReadBytes( Size );
+
+                var bufferX = new List<char>();
+                for( int i = 0; i < buffer.Length; i++ ) {
+                    bufferX.Add( (char)( ( buffer[i] >> 4 ) + '0' ) );
+
+                    if( i * 2 < Length )
+                        bufferX.Add( (char)( ( buffer[i] & 0xF ) + '0' ) );
+                }
+
+                if( Precision != 0 ) {
+                    bufferX.Insert( bufferX.Count - Precision, '.' );
+                }
+                var nums = string.Concat( bufferX.Skip( 1 ) ).TrimStart( '0' );
+
+                if( Precision != 0 )
+                    nums = nums.TrimEnd( '0', '.' );
+
+                if( nums.Length == 0 )
+                    return "0";
+
+                if( nums[0] == '.' )
+                    nums = '0' + nums;
+
+                if( bufferX[0] == '1' )
+                    return nums;
+
+                return "-" + nums;
             }
         }
         public class BooleanField: BasicField {
@@ -227,6 +254,12 @@ namespace ConsoleApplication1 {
                 r.ReadBytes( Size );
                 return "\"<version>\"";
             }
+
+            public override bool IsHidden {
+                get {
+                    return true;
+                }
+            }
         }
         public class HiddenShortVersionField: BasicField {
             public HiddenShortVersionField() : base( "HiddenVersion", false ) { }
@@ -239,6 +272,11 @@ namespace ConsoleApplication1 {
             public override string AsString( BinaryReader r ) {
                 r.ReadBytes( Size );
                 return "\"<version>\"";
+            }
+            public override bool IsHidden {
+                get {
+                    return true;
+                }
             }
         }
         public class StringField: BasicFieldWithLength {
@@ -308,8 +346,21 @@ namespace ConsoleApplication1 {
             }
 
             public override string AsString( BinaryReader r ) {
-                r.ReadBytes( Size );
-                return "\"<dateTime>\"";
+                var buffer = r.ReadBytes( Size );
+                var bufferX = new List<char>();
+                for( int i = 0; i < buffer.Length; i++ ) {
+                    bufferX.Add( (char)( ( buffer[i] >> 4 ) + '0' ) );
+                    bufferX.Add( (char)( ( buffer[i] & 0xF ) + '0' ) );
+                }
+
+                bufferX.Insert( 4, '-' );
+                bufferX.Insert( 7, '-' );
+                bufferX.Insert( 10, 'T' );
+                bufferX.Insert( 13, ':' );
+                bufferX.Insert( 16, ':' );
+                var rv = string.Concat( bufferX );
+
+                return "\"" + rv + "\"";
             }
         }
 
@@ -436,9 +487,9 @@ namespace ConsoleApplication1 {
 
                 using (var ms = new MemoryStream( data.Item2 )) {
                     using (var reader = new BinaryReader( ms )) {
-                        var result = string.Join( ",", ti.Fields.Select( vx => readValue( vx, reader ) ) );
+                        var result = string.Join( ",", ti.Fields.Select( vx => new { vx.IsHidden, value = readValue( vx, reader ) } ).Where( vx => !vx.IsHidden ).Select( vx => vx.value ) );
 
-                        yield return result;
+                        yield return "{" + result + "}";
                     }
                 }
             }
